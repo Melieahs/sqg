@@ -1,0 +1,125 @@
+#!/bin/bash
+
+BASE_URL="http://192.168.1.11:18080/packages"
+CMD=$1
+PKG=$2
+
+detect_os() {
+    case "$(uname -s)" in
+        Darwin) echo "macos" ;;
+        Linux) echo "linux" ;;
+        CYGWIN*|MINGW*|MSYS*) echo "windows" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+get_download_dir() {
+    OS=$(detect_os)
+    case "$OS" in
+        macos|linux)
+            echo "$HOME/Downloads/sqg"
+            ;;
+        windows)
+            # Git Bash / WSL 会自动映射为 Windows 用户目录
+            echo "$HOME/Downloads/sqg"
+            ;;
+        *)
+            echo "./downloads"
+            ;;
+    esac
+}
+
+get_pkg() {
+    if [ -z "$PKG" ]; then
+        echo "Missing package name"
+        echo "Usage: sqg get <package-name>[@version]"
+        exit 1
+    fi
+
+    OS_DIR=$(detect_os)
+    INDEX_URL="$BASE_URL/$OS_DIR/index.txt"
+    TMP_INDEX="/tmp/sqg_index.txt"
+
+    echo "Fetching index from $INDEX_URL..."
+    INDEX=$(curl -s "$INDEX_URL")
+    if [ -z "$INDEX" ]; then
+        echo "Failed to fetch index."
+        exit 1
+    fi
+    echo "$INDEX" > "$TMP_INDEX"
+
+    # 解析包名和版本
+    if [[ "$PKG" == *@* ]]; then
+        NAME="${PKG%@*}"
+        VERSION="${PKG#*@}"
+        FILE_LINE=$(grep "^$NAME=$VERSION=" "$TMP_INDEX")
+        FILE_NAME=$(echo "$FILE_LINE" | cut -d= -f3)
+    else
+        NAME="$PKG"
+        FILE_LINE=$(grep "^$NAME=" "$TMP_INDEX" | sort -t= -k2Vr | head -n1)
+        FILE_NAME=$(echo "$FILE_LINE" | cut -d= -f3)
+        VERSION=$(echo "$FILE_LINE" | cut -d= -f2)
+    fi
+
+    if [ -z "$FILE_NAME" ]; then
+        echo "Package '$PKG' not found in index."
+
+        # 简单建议机制（本地模糊匹配）
+        SUGGESTIONS=$(grep -i "^$NAME" "$TMP_INDEX" | cut -d= -f1 | sort | uniq | head -n 5)
+        if [ -n "$SUGGESTIONS" ]; then
+            echo "Did you mean:"
+            echo "$SUGGESTIONS" | awk '{print "  - " $1}'
+        fi
+
+        exit 1
+    fi
+
+    DOWNLOAD_DIR=$(get_download_dir)
+    mkdir -p "$DOWNLOAD_DIR"
+
+    echo "Downloading $NAME (version $VERSION): $FILE_NAME"
+    URL="$BASE_URL/$OS_DIR/$FILE_NAME"
+    curl -f -o "$DOWNLOAD_DIR/$FILE_NAME" "$URL" && {
+        echo "Downloaded to: $DOWNLOAD_DIR/$FILE_NAME"
+        return
+    }
+
+    echo "Download failed. Please check the file or server."
+}
+
+list_index() {
+    OS_DIR=$(detect_os)
+    INDEX_URL="$BASE_URL/$OS_DIR/index.txt"
+    echo "Available packages for [$OS_DIR]:"
+    curl -s "$INDEX_URL" | sort -t= -k1,1 -k2Vr | awk -F= '{printf "  %-20s %s\n", $1, $2}'
+}
+
+update_index() {
+    SCRIPT="/vol3/1000/packages/index.sh"
+    if [ ! -x "$SCRIPT" ]; then
+        echo "Index script not found or not executable: $SCRIPT"
+        exit 1
+    fi
+
+    echo "Updating index files..."
+    "$SCRIPT"
+}
+
+case "$CMD" in
+    get)
+        get_pkg
+        ;;
+    index)
+        list_index
+        ;;
+    update)
+        update_index
+        ;;
+    *)
+        echo "Unknown command: $CMD"
+        echo "Usage:"
+        echo "  sqg get <package>[@version]   Download a package"
+        echo "  sqg index                     List available packages"
+        echo "  sqg update                    Regenerate index files"
+        ;;
+esac
