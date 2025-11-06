@@ -7,7 +7,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-BASE_URL = "http://192.168.1.11:18080/packages"
+BASE_URL = "http://192.168.1.11:5050/packages"
 PLATFORMS = ["macos", "linux", "windows", "universal"]
 
 def detect_os():
@@ -198,3 +198,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
